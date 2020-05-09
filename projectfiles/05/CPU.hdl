@@ -1,0 +1,99 @@
+// This file is part of www.nand2tetris.org
+// and the book "The Elements of Computing Systems"
+// by Nisan and Schocken, MIT Press.
+// File name: projects/05/CPU.hdl
+
+/**
+ * The Hack CPU (Central Processing unit), consisting of an ALU,
+ * two registers named A and D, and a program counter named PC.
+ * The CPU is designed to fetch and execute instructions written in 
+ * the Hack machine language. In particular, functions as follows:
+ * Executes the inputted instruction according to the Hack machine 
+ * language specification. The D and A in the language specification
+ * refer to CPU-resident registers, while M refers to the external
+ * memory location addressed by A, i.e. to Memory[A]. The inM input 
+ * holds the value of this location. If the current instruction needs 
+ * to write a value to M, the value is placed in outM, the address 
+ * of the target location is placed in the addressM output, and the 
+ * writeM control bit is asserted. (When writeM==0, any value may 
+ * appear in outM). The outM and writeM outputs are combinational: 
+ * they are affected instantaneously by the execution of the current 
+ * instruction. The addressM and pc outputs are clocked: although they 
+ * are affected by the execution of the current instruction, they commit 
+ * to their new values only in the next time step. If reset==1 then the 
+ * CPU jumps to address 0 (i.e. pc is set to 0 in next time step) rather 
+ * than to the address resulting from executing the current instruction. 
+ */
+
+CHIP CPU {
+
+    IN  inM[16],         // M value input  (M = contents of RAM[A])
+        instruction[16], // Instruction for execution
+        reset;           // Signals whether to re-start the current
+                         // program (reset==1) or continue executing
+                         // the current program (reset==0).
+
+    OUT outM[16],        // M value output
+        writeM,          // Write to M? 
+        addressM[15],    // Address in data memory (of M)
+        pc[15];          // address of next instruction
+
+    PARTS:
+    
+	//Select memory or instruction based on i[15]
+	Mux16(a = instruction, b = aluout, sel = instruction[15], out = muxa);
+	
+	//If A instruction, load A Register
+	Not(in = instruction[15], out = loadaregains);
+	
+	//If C instruction and destination is A Register, load A Register
+	And(a = instruction[15], b = instruction[5], out = loadaregcins);
+
+	//Load A Register if A or C
+	Or(a = loadaregains, b = loadaregcins, out = loadareg);
+	ARegister(in = muxa, load = loadareg, out = aregout, out[0..14] = addressM);
+	
+	//Select either A or M based on i[12] of C instruction
+	Mux16(a = aregout, b = inM, sel = instruction[12], out = muxb);
+	
+	//Load D Register if C Instruction and destination is D Register
+	And(a = instruction[15], b = instruction[4], out = loaddreg);
+	DRegister(in = aluout, load = loaddreg, out = dregout);
+	
+	//Write to memory only if C instruction and destination is M
+	And(a = instruction[15], b = instruction[3], out = writeM);
+	
+	//Instructions[6..11] map directly with ALU input commands
+	ALU(x = dregout, y = muxb, zx = instruction[11], nx = instruction[10], zy = instruction[9], ny = instruction[8], f = instruction[7], no = instruction[6], out = outM, out = aluout, zr = zrf, ng = ngf);
+	
+	//Complements of flags to be used for jumps
+	Not(in = zrf, out = notzrf);
+	Not(in = ngf, out = notngf);
+	
+	//Select type of jump if a C Instruction, null to be discarded
+	DMux8Way(in = instruction[15], sel = instruction[0..2], a = null, b = jgt, c = jeq, d = jge, e = jlt, f = jne, g = jle, h = jmp);
+	
+	//Check conditions required for each jump
+	And(a = notngf, b = notzrf, out = jgt2);
+	And(a = jgt, b = jgt2, out = jgtout);	
+	
+	And(a = jeq, b = zrf, out = jeqout);
+
+	And(a = jge, b = notngf, out = jgeout);
+
+	And(a = jlt, b = ngf, out = jltout);
+	
+	And(a = jne, b = notzrf, out = jneout);
+	
+	Or(a = ngf, b = zrf, out = jle2);
+	And(a = jle, b = jle2, out = jleout);
+
+
+	//Decide whether a jump is required by considering all jump conditions
+	Or8Way(in[0] = false, in[1] = jgtout, in[2] = jeqout, in[3] = jgeout, in[4] = jltout, in[5] = jneout, in[6] = jleout, in[7] = jmp, out = jumpout);
+	
+	//If not a jump (for both A and C Instructions)? Increment
+	Not(in = jumpout, out = njmpinc);	
+	
+	PC(in = aregout, load = jumpout, inc = njmpinc, reset = reset, out[0..14] = pc[0..14]);
+}
